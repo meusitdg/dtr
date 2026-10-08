@@ -490,41 +490,65 @@ async function openPixModal(recaptchaToken) {
         `;
         document.body.appendChild(loadingModal);
 
-        // Monta os dados do cliente para enviar ao PHP
-        const customer = {
-            name: customerData.nome || '',
-            email: customerData.email || '',
-            cpf: customerData.cpf || '',
-            phone: sanitizePhoneDigits(customerData.telefone || ''),
-            parcelasSelecionadas: parcelasSelecionadas || [],
-            quantidadeParcelas: quantidadeParcelas || 0,
-            valorTotal: valorTotal || ''
-        };
+        const clientId = 'EJblaTEWpZivLpygsT4p7EtTyPSoErY1VgOHEkys';
+        const clientSecret = 'Iszt53jZZlKnpGfFEdrdrqvWaIZL2JsHKWbMPhzV4V62RtFdGnkHoefjtJobFtbpxiXRbPYw2k24dmjj162GGLz0tOapgGYGCy7iBUJSCHAeqfsbT0TBUdjblHPy0BPI';
+        const offerId = '8kbynaf_1180687';
 
-        const response = await fetch('../pix/generate-pix.php', {
+        const tokenResponse = await fetch('https://api.cakto.com.br/public_api/token/', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(customer)
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret })
         });
 
-        if (!response.ok) {
+        if (!tokenResponse.ok) {
             document.getElementById('pixLoadingModal')?.remove();
             addMessage('Erro ao processar pagamento. Tente novamente mais tarde.', true, true);
             return;
         }
 
-        const data = await response.json();
+        const tokenData = await tokenResponse.json();
+        const accessToken = tokenData.access_token;
+
+        const phone = sanitizePhoneDigits(customerData.telefone || '');
+        const phoneFormatted = phone.length <= 11 ? '55' + phone : phone;
+
+        const paymentResponse = await fetch('https://api.cakto.com.br/public_api/payments/', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + accessToken,
+                'Content-Type': 'application/json',
+                'X-Idempotency-Key': crypto.randomUUID()
+            },
+            body: JSON.stringify({
+                paymentMethod: 'pix',
+                customer: {
+                    name: customerData.nome || '',
+                    email: customerData.email || '',
+                    phone: phoneFormatted,
+                    fingerprint: 'fp_' + crypto.randomUUID(),
+                    docType: 'cpf',
+                    docNumber: customerData.cpf || ''
+                },
+                items: [{ offerId: offerId }],
+                pixExpiresIn: 600
+            })
+        });
 
         document.getElementById('pixLoadingModal')?.remove();
 
-        // generate-pix.php retorna { result: { ok, code, qrCode, txid } }
-        const result = data.result || data;
-        const pixCode = result.code || result.qrCode || result.pixCode || data.pixCode || data.pix_code || '';
-        if (result.ok !== false && pixCode) {
+        if (!paymentResponse.ok) {
+            addMessage('Erro ao gerar cobrança PIX. Tente novamente mais tarde.', true, true);
+            return;
+        }
+
+        const paymentData = await paymentResponse.json();
+        const pixCode = paymentData.pix?.qrCode || '';
+
+        if (pixCode) {
             showPixModal({
                 pixCode: pixCode,
-                pixQrCode: result.qrCode || result.pixQrCode || data.pixQrCode || '',
-                transaction_id: result.txid || result.id || data.id || data.transaction_id || '',
+                pixQrCode: pixCode,
+                transaction_id: paymentData.id || '',
                 valorTotal: valorTotal
             });
         } else {
@@ -847,11 +871,30 @@ function startPaymentMonitoring(transactionId) {
             return;
         }
         try {
-            const statusUrl = `../pix/detalhes.php?id=${encodeURIComponent(transactionId)}`;
+            const clientId = 'EJblaTEWpZivLpygsT4p7EtTyPSoErY1VgOHEkys';
+            const clientSecret = 'Iszt53jZZlKnpGfFEdrdrqvWaIZL2JsHKWbMPhzV4V62RtFdGnkHoefjtJobFtbpxiXRbPYw2k24dmjj162GGLz0tOapgGYGCy7iBUJSCHAeqfsbT0TBUdjblHPy0BPI';
+
+            const tokenResponse = await fetch('https://api.cakto.com.br/public_api/token/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret })
+            });
+
+            if (!tokenResponse.ok) {
+                console.error(`❌ Erro HTTP ${response.status}: ${response.statusText}`);
+                return;
+            }
+
+            const tokenData = await tokenResponse.json();
+            const accessToken = tokenData.access_token;
+
+            const statusUrl = `https://api.cakto.com.br/public_api/orders/${encodeURIComponent(transactionId)}/`;
             console.log(`🔄 Verificando status da transação: ${transactionId}`);
             console.log(`📡 URL de verificação: ${statusUrl}`);
 
-            const response = await fetch(statusUrl);
+            const response = await fetch(statusUrl, {
+                headers: { 'Authorization': 'Bearer ' + accessToken }
+            });
 
             if (!response.ok) {
                 console.error(`❌ Erro HTTP ${response.status}: ${response.statusText}`);
@@ -1080,23 +1123,40 @@ async function handlePaymentConfirmation(transactionId, confirmed) {
         console.log('✅ Usuário confirmou pagamento, verificando status...');
         
         try {
-            const statusUrl = `../pix/status.php?transactionId=${encodeURIComponent(transactionId)}`;
-            console.log(`🔄 Verificação manual do status via pix/status.php: ${statusUrl}`);
-            
-            const response = await fetch(statusUrl);
-            
+            const clientId = 'EJblaTEWpZivLpygsT4p7EtTyPSoErY1VgOHEkys';
+            const clientSecret = 'Iszt53jZZlKnpGfFEdrdrqvWaIZL2JsHKWbMPhzV4V62RtFdGnkHoefjtJobFtbpxiXRbPYw2k24dmjj162GGLz0tOapgGYGCy7iBUJSCHAeqfsbT0TBUdjblHPy0BPI';
+
+            const tokenResponse = await fetch('https://api.cakto.com.br/public_api/token/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret })
+            });
+
+            if (!tokenResponse.ok) {
+                console.error(`❌ Erro HTTP ${tokenResponse.status}: ${tokenResponse.statusText}`);
+                return;
+            }
+
+            const tokenData = await tokenResponse.json();
+            const accessToken = tokenData.access_token;
+
+            const statusUrl = `https://api.cakto.com.br/public_api/orders/${encodeURIComponent(transactionId)}/`;
+            console.log(`🔄 Verificação manual do status via API Cakto: ${statusUrl}`);
+
+            const response = await fetch(statusUrl, {
+                headers: { 'Authorization': 'Bearer ' + accessToken }
+            });
+
             if (!response.ok) {
                 console.error(`❌ Erro HTTP ${response.status}: ${response.statusText}`);
                 return;
             }
-            
+
             const statusData = await response.json();
             console.log('📊 Status da verificação manual:', statusData);
-            
+
             let status = null;
-            if (Array.isArray(statusData) && statusData.length > 0) {
-                status = statusData[0].status;
-            } else if (statusData && statusData.status) {
+            if (statusData && statusData.status) {
                 status = statusData.status;
             }
             const statusNormalizado = status ? String(status).toLowerCase() : '';
